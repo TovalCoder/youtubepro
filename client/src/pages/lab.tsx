@@ -27,6 +27,8 @@ import type { Video } from "@shared/schema";
 import {
   applyLabFilters,
   defaultLabFilters,
+  formatAbsolutePublished,
+  formatRelativePublished,
   rankByOutlierScore,
   type LabFilters,
   type LabLane,
@@ -859,7 +861,10 @@ export default function LabPage() {
                           {entry.video.channelTitle} · {formatCount(entry.video.channelStatistics?.subscriberCount)} subs
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {formatCount(entry.video.viewCount)} views · {entry.video.publishedAt.slice(0, 10)}
+                          {formatCount(entry.video.viewCount)} views ·{" "}
+                          <span title={formatAbsolutePublished(entry.video.publishedAt)}>
+                            {formatRelativePublished(entry.video.publishedAt, nowIso)}
+                          </span>
                           {entry.score.baselineSource === "recent_uploads"
                             ? ` · vs median ${formatCount(entry.score.baselineViews)}`
                             : entry.score.baselineSource === "lifetime_average"

@@ -159,3 +159,71 @@ export function rankByOutlierScore(entries: LabRankedVideo[]): LabRankedVideo[] 
     return (b.video.viewCount ?? 0) - (a.video.viewCount ?? 0);
   });
 }
+
+// Publication recency is read at a glance, so it is expressed relative to the
+// creator's own calendar rather than as an ISO date. Day boundaries are
+// computed in their time zone: a video published late yesterday evening reads
+// as "1 day ago" even when fewer than 24 hours have passed.
+//
+// Australia/Sydney rather than a fixed +10 offset, so the New South Wales
+// daylight-saving switch is handled instead of silently shifting every date by
+// an hour for half the year.
+export const LAB_TIME_ZONE = "Australia/Sydney";
+
+// Days since the Unix epoch for the calendar date this instant falls on in the
+// given zone. Differencing these counts calendar days, not 24-hour spans.
+function calendarDayInZone(iso: string, timeZone: string): number | null {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(ms));
+  const valueOf = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const year = valueOf("year");
+  const month = valueOf("month");
+  const day = valueOf("day");
+  if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(day)) return null;
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+export function formatAbsolutePublished(publishedAt: string, timeZone: string = LAB_TIME_ZONE): string {
+  const ms = Date.parse(publishedAt);
+  if (!Number.isFinite(ms)) return "Unknown date";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(ms));
+}
+
+// Days up to a week, weeks up to a month, months up to a year, then the
+// actual date. Anything inside a year stays relative so recency is readable
+// without doing arithmetic.
+export function formatRelativePublished(
+  publishedAt: string,
+  nowIso: string,
+  timeZone: string = LAB_TIME_ZONE,
+): string {
+  const publishedDay = calendarDayInZone(publishedAt, timeZone);
+  const today = calendarDayInZone(nowIso, timeZone);
+  if (publishedDay === null || today === null) return "Unknown date";
+
+  const days = today - publishedDay;
+  if (days < 0) return "Scheduled";
+  if (days === 0) return "Today";
+  if (days === 1) return "1 day ago";
+  if (days < 7) return `${days} days ago`;
+  if (days < 30) {
+    const weeks = Math.floor(days / 7);
+    return weeks === 1 ? "1 week ago" : `${weeks} weeks ago`;
+  }
+  if (days < 365) {
+    const months = Math.floor(days / 30);
+    return months === 1 ? "1 month ago" : `${months} months ago`;
+  }
+  return formatAbsolutePublished(publishedAt, timeZone);
+}
