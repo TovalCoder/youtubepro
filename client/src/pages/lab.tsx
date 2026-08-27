@@ -13,8 +13,10 @@ import {
   Copy,
   Download,
   FlaskConical,
+  FolderOpen,
   Lightbulb,
   Loader2,
+  RefreshCw,
   Search,
   Sparkles,
   Star,
@@ -216,6 +218,27 @@ interface RenderState {
   model: string | null;
 }
 
+interface SwipeAnalysis {
+  trigger: string;
+  whyItWorks: string;
+  focalPoint: string;
+  separationTechnique: string;
+  textTreatment: string;
+  colorStrategy: string;
+  transferableTechnique: string;
+  stealThis: string;
+}
+
+interface SwipeEntry {
+  id: string;
+  fileName: string;
+  bytes: number;
+  modifiedAt: string;
+  analyzed: boolean;
+  note: string;
+  analysis: SwipeAnalysis | null;
+}
+
 interface TopicSuggestion {
   topic: string;
   title: string;
@@ -292,9 +315,71 @@ export default function LabPage() {
   const [renders, setRenders] = useState<Record<string, RenderState>>({});
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const [swipeEntries, setSwipeEntries] = useState<SwipeEntry[]>([]);
+  const [swipeFolder, setSwipeFolder] = useState("");
+  const [swipeScanning, setSwipeScanning] = useState(false);
+  const [swipeAnalyzing, setSwipeAnalyzing] = useState(false);
+  const [swipeError, setSwipeError] = useState<RequestFailure | null>(null);
+  const [includeSwipe, setIncludeSwipe] = useState(true);
+  const [expandedSwipe, setExpandedSwipe] = useState<string | null>(null);
+
   const [topicsLoading, setTopicsLoading] = useState<"refine" | "suggest" | null>(null);
   const [topicsError, setTopicsError] = useState<RequestFailure | null>(null);
   const [topicSuggestions, setTopicSuggestions] = useState<TopicSuggestion[]>([]);
+
+  const scanSwipeFolder = async (silent = false) => {
+    if (!silent) setSwipeScanning(true);
+    setSwipeError(null);
+    try {
+      const response = await fetch("/api/lab/swipe");
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw payload;
+      setSwipeEntries(payload.entries ?? []);
+      setSwipeFolder(payload.folder ?? "");
+    } catch (error) {
+      if (!silent) setSwipeError(failureFrom(error));
+    } finally {
+      setSwipeScanning(false);
+    }
+  };
+
+  useEffect(() => {
+    void scanSwipeFolder(true);
+    // Scans once on mount; the Scan folder button refreshes on demand.
+  }, []);
+
+  const unanalyzedSwipe = useMemo(() => swipeEntries.filter((entry) => !entry.analyzed), [swipeEntries]);
+
+  const analyzeSwipe = async (fileNames: string[]) => {
+    if (fileNames.length === 0) return;
+    setSwipeAnalyzing(true);
+    setSwipeError(null);
+    try {
+      const notes: Record<string, string> = {};
+      for (const entry of swipeEntries) {
+        if (fileNames.includes(entry.fileName) && entry.note) notes[entry.fileName] = entry.note;
+      }
+      const data = await postJson<{ entries: SwipeEntry[] }>("/api/lab/swipe/analyze", {
+        fileNames: fileNames.slice(0, 12),
+        notes,
+      });
+      setSwipeEntries(data.entries);
+    } catch (error) {
+      setSwipeError(failureFrom(error));
+    } finally {
+      setSwipeAnalyzing(false);
+    }
+  };
+
+  const saveSwipeNote = async (entry: SwipeEntry, note: string) => {
+    setSwipeEntries((current) => current.map((item) => (item.id === entry.id ? { ...item, note } : item)));
+    if (!entry.analyzed) return;
+    try {
+      await postJson("/api/lab/swipe/note", { id: entry.id, fileName: entry.fileName, note });
+    } catch {
+      // Notes are a convenience; a failed save should not interrupt the Lab.
+    }
+  };
 
   const filters: LabFilters = useMemo(() => {
     const num = (raw: string): number | null => {
@@ -482,6 +567,7 @@ export default function LabPage() {
         patternSynthesis: report ? JSON.stringify(report.synthesis, null, 2) : "",
         referenceImages: referenceImagesPayload(),
         referenceRightsConfirmed: faceRefs.length > 0 ? rightsConfirmed : false,
+        includeSwipeFile: includeSwipe,
       });
       setConcepts(data.concepts);
       setRenders({});
@@ -873,6 +959,127 @@ export default function LabPage() {
           </CardContent>
         </Card>
       )}
+
+      <Card data-testid="swipe-file">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base">Swipe file</CardTitle>
+          <CardDescription>
+            Thumbnails you saved while scrolling because your own eye judged them exceptional. Drop images into the folder below, scan, and analyze. Analyzed entries steer every packaging concept.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => void scanSwipeFolder()} disabled={swipeScanning} data-testid="button-scan-swipe">
+              {swipeScanning ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+              Scan folder
+            </Button>
+            <Button
+              onClick={() => void analyzeSwipe(unanalyzedSwipe.map((entry) => entry.fileName))}
+              disabled={swipeAnalyzing || unanalyzedSwipe.length === 0}
+              data-testid="button-analyze-swipe"
+            >
+              {swipeAnalyzing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Wand2 className="mr-2 h-4 w-4" />}
+              Analyze new ({unanalyzedSwipe.length})
+            </Button>
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="include-swipe"
+                checked={includeSwipe}
+                onCheckedChange={(checked) => setIncludeSwipe(checked === true)}
+                data-testid="checkbox-include-swipe"
+              />
+              <Label htmlFor="include-swipe" className="text-xs font-normal text-muted-foreground">
+                Use swipe file when generating concepts
+              </Label>
+            </div>
+          </div>
+
+          {swipeFolder && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+              <code className="rounded bg-muted px-1.5 py-0.5">{swipeFolder}</code>
+            </p>
+          )}
+          {swipeError && <FailureNote failure={swipeError} />}
+
+          {swipeEntries.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              No images yet. Save thumbnails into the folder above (PNG, JPEG, or WebP), then press Scan folder. Descriptive file names help the analysis.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {swipeEntries.map((entry) => (
+                <div key={entry.id} className="overflow-hidden rounded-lg border border-border bg-card" data-testid={`swipe-${entry.id}`}>
+                  <div className="relative aspect-video bg-muted">
+                    <img
+                      src={`/api/lab/swipe/image?file=${encodeURIComponent(entry.fileName)}`}
+                      alt={entry.fileName}
+                      loading="lazy"
+                      className="h-full w-full object-cover"
+                    />
+                    {entry.analysis && (
+                      <Badge className="absolute left-2 top-2 border-transparent bg-primary text-primary-foreground">
+                        {entry.analysis.trigger}
+                      </Badge>
+                    )}
+                    {!entry.analyzed && (
+                      <Badge className="absolute right-2 top-2 border-transparent bg-black/70 text-white">Not analyzed</Badge>
+                    )}
+                  </div>
+                  <div className="space-y-2 p-3">
+                    <p className="line-clamp-1 text-xs font-medium">{entry.fileName}</p>
+                    <Input
+                      value={entry.note}
+                      maxLength={300}
+                      placeholder="Why did you save this? (optional)"
+                      onChange={(event) => void saveSwipeNote(entry, event.target.value)}
+                      className="h-8 text-xs"
+                      data-testid={`input-swipe-note-${entry.id}`}
+                    />
+                    {entry.analysis && (
+                      <>
+                        <p className="text-xs leading-relaxed">
+                          <span className="font-medium">Steal: </span>{entry.analysis.stealThis}
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedSwipe((current) => (current === entry.id ? null : entry.id))}
+                          className="text-xs text-primary underline-offset-2 hover:underline"
+                          data-testid={`button-swipe-details-${entry.id}`}
+                        >
+                          {expandedSwipe === entry.id ? "Hide breakdown" : "Full breakdown"}
+                        </button>
+                        {expandedSwipe === entry.id && (
+                          <dl className="space-y-1 border-t border-border pt-2 text-xs leading-relaxed">
+                            <div><dt className="inline font-medium">Why it works: </dt><dd className="inline">{entry.analysis.whyItWorks}</dd></div>
+                            <div><dt className="inline font-medium">Focal point: </dt><dd className="inline">{entry.analysis.focalPoint}</dd></div>
+                            <div><dt className="inline font-medium">Separation: </dt><dd className="inline">{entry.analysis.separationTechnique}</dd></div>
+                            <div><dt className="inline font-medium">Text: </dt><dd className="inline">{entry.analysis.textTreatment || "(none)"}</dd></div>
+                            <div><dt className="inline font-medium">Color: </dt><dd className="inline">{entry.analysis.colorStrategy}</dd></div>
+                            <div><dt className="inline font-medium">Transferable: </dt><dd className="inline">{entry.analysis.transferableTechnique}</dd></div>
+                          </dl>
+                        )}
+                      </>
+                    )}
+                    {!entry.analyzed && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void analyzeSwipe([entry.fileName])}
+                        disabled={swipeAnalyzing}
+                        data-testid={`button-analyze-one-${entry.id}`}
+                      >
+                        <Wand2 className="mr-1.5 h-3.5 w-3.5" />
+                        Analyze
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card data-testid="topic-engine">
         <CardHeader className="pb-3">

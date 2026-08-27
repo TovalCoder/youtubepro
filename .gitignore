@@ -14,3 +14,6 @@ vite.config.ts.*
 CLAUDE.md
 design_guidelines.md
 attached_assets/
+
+# Personal thumbnail swipe file: screenshots of other creators work stay local
+swipe-file/

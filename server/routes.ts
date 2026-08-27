@@ -23,9 +23,22 @@ import {
   labSearchRequestSchema,
   labSeedsRequestSchema,
   labTopicsRequestSchema,
+  swipeAnalyzeRequestSchema,
+  swipeNoteRequestSchema,
 } from "./lab-contracts";
+import {
+  hashSwipeFile,
+  listSwipeEntries,
+  readSwipeImage,
+  resolveSwipeFile,
+  saveSwipeAnalysis,
+  saveSwipeNote,
+  summarizeSwipeLibrary,
+  SWIPE_DIR,
+} from "./swipe-file";
 import { scoreVideosForLab } from "./outlier";
 import {
+  analyzeSwipeThumbnails,
   analyzeThumbnailPatterns,
   generateLabTopics,
   generatePackagingConcepts,
@@ -389,10 +402,16 @@ export async function registerRoutes(
           details: parsed.error.flatten(),
         });
       }
+      const swipeSummary = parsed.data.includeSwipeFile
+        ? summarizeSwipeLibrary(await listSwipeEntries())
+        : "";
+      const combinedEvidence = [parsed.data.patternSynthesis, swipeSummary]
+        .filter((part) => part.trim().length > 0)
+        .join("\n\n");
       const concepts = await generatePackagingConcepts(
         parsed.data.topic,
         parsed.data.angle,
-        parsed.data.patternSynthesis,
+        combinedEvidence,
         parsed.data.referenceImages.length > 0,
       );
       res.json({ concepts });
@@ -454,6 +473,107 @@ export async function registerRoutes(
       console.error("Lab topics error:", error);
       const providerError = normalizeProviderError(error, "gemini");
       res.status(providerError.status).json(providerErrorPayload(providerError, "Lab topic packages"));
+    }
+  });
+
+  app.get("/api/lab/swipe", async (_req, res) => {
+    try {
+      const entries = await listSwipeEntries();
+      res.json({ entries, folder: SWIPE_DIR });
+    } catch (error: unknown) {
+      console.error("Swipe list error:", error);
+      const providerError = normalizeProviderError(error, "youtube");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Swipe file listing"));
+    }
+  });
+
+  app.get("/api/lab/swipe/image", async (req, res) => {
+    try {
+      const fileName = typeof req.query.file === "string" ? req.query.file : "";
+      const { buffer, mimeType } = await readSwipeImage(fileName);
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Cache-Control", "no-store");
+      res.send(buffer);
+    } catch (error: unknown) {
+      const providerError = normalizeProviderError(error, "youtube");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Swipe file image"));
+    }
+  });
+
+  app.post("/api/lab/swipe/analyze", rateLimit, async (req, res) => {
+    try {
+      const parsed = swipeAnalyzeRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid swipe analysis request",
+          code: "SWIPE_ANALYZE_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Select between 1 and 12 swipe files to analyze.",
+          details: parsed.error.flatten(),
+        });
+      }
+
+      const inputs = [];
+      for (const fileName of parsed.data.fileNames) {
+        const resolved = resolveSwipeFile(fileName);
+        if (!resolved) continue;
+        const { buffer, mimeType } = await readSwipeImage(fileName);
+        inputs.push({
+          fileName,
+          note: parsed.data.notes[fileName] || "",
+          mimeType,
+          data: buffer.toString("base64"),
+          id: await hashSwipeFile(resolved.filePath),
+        });
+      }
+      if (inputs.length === 0) {
+        return res.status(400).json({
+          error: "No readable swipe files were selected",
+          code: "SWIPE_NO_READABLE_FILES",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Add PNG, JPEG, or WebP thumbnails to the swipe-file folder and scan again.",
+        });
+      }
+
+      const results = await analyzeSwipeThumbnails(
+        inputs.map(({ fileName, note, mimeType, data }) => ({ fileName, note, mimeType, data })),
+      );
+      const byName = new Map(inputs.map((input) => [input.fileName, input]));
+      for (const result of results) {
+        const input = byName.get(result.fileName);
+        if (!input) continue;
+        await saveSwipeAnalysis(input.id, input.fileName, input.note, result.analysis as any);
+      }
+
+      const entries = await listSwipeEntries();
+      res.json({ entries, analyzed: results.length });
+    } catch (error: unknown) {
+      console.error("Swipe analyze error:", error);
+      const providerError = normalizeProviderError(error, "gemini");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Swipe file analysis"));
+    }
+  });
+
+  app.post("/api/lab/swipe/note", async (req, res) => {
+    try {
+      const parsed = swipeNoteRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid swipe note request",
+          code: "SWIPE_NOTE_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Keep the note under 300 characters.",
+          details: parsed.error.flatten(),
+        });
+      }
+      await saveSwipeNote(parsed.data.id, parsed.data.fileName, parsed.data.note);
+      res.json({ success: true });
+    } catch (error: unknown) {
+      const providerError = normalizeProviderError(error, "youtube");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Swipe file note"));
     }
   });
 

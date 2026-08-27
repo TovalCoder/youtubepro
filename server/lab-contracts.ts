@@ -44,6 +44,7 @@ export const labConceptsRequestSchema = z.object({
   patternSynthesis: z.string().trim().max(30_000).default(""),
   referenceImages: z.array(thumbnailReferenceImageSchema).max(3).default([]),
   referenceRightsConfirmed: z.boolean().default(false),
+  includeSwipeFile: z.boolean().default(true),
 }).strict().superRefine((request, ctx) => {
   if (request.referenceImages.length > 0 && !request.referenceRightsConfirmed) {
     ctx.addIssue({
@@ -161,3 +162,34 @@ export const labTopicSuggestionSchema = z.object({
 }).strict();
 
 export const labTopicsOutputSchema = z.array(labTopicSuggestionSchema).min(3).max(6);
+
+// ---- Swipe file ----
+
+export const swipeAnalyzeRequestSchema = z.object({
+  fileNames: z.array(z.string().trim().min(1).max(260)).min(1).max(12),
+  notes: z.record(z.string().trim().max(300)).default({}),
+}).strict();
+
+export const swipeNoteRequestSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  fileName: z.string().trim().min(1).max(260),
+  note: z.string().trim().max(300),
+}).strict();
+
+export const swipeAnalysisSchema = z.object({
+  trigger: z.string().trim().min(1).max(120),
+  whyItWorks: z.string().trim().min(1).max(1_500),
+  focalPoint: z.string().trim().min(1).max(500),
+  separationTechnique: z.string().trim().min(1).max(500),
+  textTreatment: z.string().trim().max(500),
+  colorStrategy: z.string().trim().min(1).max(500),
+  transferableTechnique: z.string().trim().min(1).max(1_000),
+  stealThis: z.string().trim().min(1).max(500),
+}).strict();
+
+export const swipeAnalysisOutputSchema = z.object({
+  fileName: z.string().trim().min(1).max(260),
+  analysis: swipeAnalysisSchema,
+}).strict();
+
+export const swipeAnalysisListSchema = z.array(swipeAnalysisOutputSchema).min(1).max(12);
