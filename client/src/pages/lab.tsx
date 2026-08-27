@@ -32,6 +32,7 @@ import {
   formatAbsolutePublished,
   formatRelativePublished,
   rankByOutlierScore,
+  type LabFilterFunnelRow,
   type LabFilters,
   type LabLane,
   type LabRankedVideo,
@@ -280,28 +281,55 @@ function FailureNote({ failure }: { failure: RequestFailure }) {
 }
 
 
-// Plain-language key for the funnel badges. The badge row reports each filter
-// in isolation, which cannot show that the videos passing one filter are
-// mostly not the videos passing another, so the empty-result case gets an
-// explicit explanation rather than leaving it to be inferred.
+// Reads the funnel badges back as sentences about this specific result set.
+// A generic glossary does not answer the question the badges provoke, which is
+// why these particular numbers produced this particular result.
 function FilterExplainer({
-  tightestLabel,
+  rows,
+  filters,
+  entries,
+  nowIso,
   showing,
   fetched,
 }: {
-  tightestLabel: string;
+  rows: LabFilterFunnelRow[];
+  filters: LabFilters;
+  entries: LabRankedVideo[];
+  nowIso: string;
   showing: number;
   fetched: number;
 }) {
-  const terms: Array<{ term: string; meaning: string }> = [
-    { term: "Min outlier x", meaning: "How many times more views a video got than that channel's own typical video. 3x means triple its usual. High score on a small channel means the packaging did the work." },
-    { term: "Min views", meaning: "Total views the video has, all time." },
-    { term: "Min VPH", meaning: "Views per hour since it was published. Shows how fast it is moving, not how big it got." },
-    { term: "Max subs", meaning: "Biggest channel you want to see. Lower this to find small channels; it is usually the filter that empties your results." },
-    { term: "Min length / Max length", meaning: "Video duration in minutes. Set a minimum to exclude Shorts." },
-    { term: "Within days", meaning: "How recently it was published. This one also narrows the YouTube search itself." },
-    { term: "English only", meaning: "Keeps videos whose uploader declared English. Videos with no declared language are excluded." },
-  ];
+  const describe = (row: LabFilterFunnelRow): string => {
+    switch (row.key) {
+      case "minOutlierScore":
+        return `scored at least ${filters.minOutlierScore}x their channel's normal views`;
+      case "minViews":
+        return `have at least ${formatCount(filters.minViews)} views`;
+      case "minViewsPerHour":
+        return `are gaining at least ${formatCount(filters.minViewsPerHour)} views per hour`;
+      case "maxSubscribers":
+        return `come from channels with ${formatCount(filters.maxSubscribers)} subscribers or fewer`;
+      case "minDurationSeconds":
+        return `run at least ${Math.round((filters.minDurationSeconds || 0) / 60)} minutes`;
+      case "maxDurationSeconds":
+        return `run ${Math.round((filters.maxDurationSeconds || 0) / 60)} minutes or less`;
+      case "publishedWithinDays":
+        return `were published in the last ${filters.publishedWithinDays} days`;
+      case "englishOnly":
+        return "are declared English by their uploader";
+      default:
+        return "pass this filter";
+    }
+  };
+
+  const tightest = rows.reduce((worst, row) => (row.passing < worst.passing ? row : worst));
+  // What the result would be if the tightest filter were switched off, which is
+  // the number that tells the creator whether loosening it is worth doing.
+  const withoutTightest = applyLabFilters(
+    entries,
+    { ...filters, [tightest.key]: defaultLabFilters[tightest.key as keyof LabFilters] } as LabFilters,
+    nowIso,
+  ).length;
 
   return (
     <Accordion type="single" collapsible className="w-full basis-full">
@@ -310,28 +338,27 @@ function FilterExplainer({
           What do these numbers mean?
         </AccordionTrigger>
         <AccordionContent className="space-y-3 pb-2 text-xs leading-relaxed">
-          <p>
-            Each badge shows how many of the {fetched} fetched videos that filter would allow through
-            <strong> on its own</strong>. It is a count of videos, not a setting.
-          </p>
-          {showing === 0 && (
-            <p className="rounded-md border border-border bg-muted/50 p-2">
-              <strong>Why you are seeing 0.</strong> A video has to pass every filter at the same time.
-              The videos that clear one filter are mostly not the same videos that clear another, so the
-              overlap can be empty even when each badge looks healthy. Start by loosening{" "}
-              <strong>{tightestLabel}</strong>, then re-run the search.
-            </p>
-          )}
-          <dl className="space-y-1.5">
-            {terms.map((entry) => (
-              <div key={entry.term}>
-                <dt className="inline font-medium">{entry.term}: </dt>
-                <dd className="inline text-muted-foreground">{entry.meaning}</dd>
-              </div>
+          <p className="text-muted-foreground">Out of {fetched} videos fetched:</p>
+          <ul className="space-y-1">
+            {rows.map((row) => (
+              <li key={row.key} className={row.key === tightest.key ? "font-medium" : ""}>
+                <span className="tabular-nums">{row.passing}</span> {describe(row)}
+                {row.key === tightest.key && <span className="text-destructive"> &larr; fewest</span>}
+              </li>
             ))}
-          </dl>
+          </ul>
+          <p>
+            But a video has to be in <strong>every one</strong> of those groups at the same time, and they
+            barely overlap. Only <strong>{showing}</strong> {showing === 1 ? "video is" : "videos are"} in all{" "}
+            {rows.length} at once. That is what you are seeing above.
+          </p>
+          <p className="rounded-md border border-border bg-muted/50 p-2">
+            <strong>{tightest.label}</strong> is the bottleneck at {tightest.passing}. Turn it off and you
+            would see <strong>{withoutTightest}</strong> {withoutTightest === 1 ? "video" : "videos"} instead
+            of {showing}.
+          </p>
           <p className="text-muted-foreground">
-            Search depth only fetches more candidates. If a filter is the problem, more depth will not help.
+            Raising search depth fetches more candidates, but it cannot help when a filter is the limit.
           </p>
         </AccordionContent>
       </AccordionItem>
@@ -922,7 +949,7 @@ export default function LabPage() {
                             Tightest is {tightest.label}. Loosen it, or raise search depth.
                           </span>
                         )}
-                        <FilterExplainer tightestLabel={tightest.label} showing={visible.length} fetched={state.entries.length} />
+                        <FilterExplainer rows={funnel} filters={filters} entries={state.entries} nowIso={nowIso} showing={visible.length} fetched={state.entries.length} />
                       </div>
                     );
                   })()}
