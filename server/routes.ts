@@ -351,7 +351,11 @@ export async function registerRoutes(
       let first: Awaited<ReturnType<typeof searchVideos>> | null = null;
 
       for (let page = 0; page < parsed.data.pages; page++) {
-        const result = await searchVideos(parsed.data.filters, { pageToken, publishedAfter });
+        const result = await searchVideos(parsed.data.filters, {
+          pageToken,
+          publishedAfter,
+          relevanceLanguage: parsed.data.englishOnly ? "en" : undefined,
+        });
         pagesFetched++;
         if (!first) first = result;
         for (const video of result.videos) {

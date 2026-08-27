@@ -3,6 +3,7 @@ import { describe, test } from "node:test";
 import type { Video } from "./schema";
 import {
   applyLabFilters,
+  computeFilterFunnel,
   computeOutlierScore,
   formatAbsolutePublished,
   formatRelativePublished,
@@ -10,6 +11,7 @@ import {
   defaultLabFilters,
   median,
   outlierBracket,
+  isEnglishVideo,
   parseIsoDurationSeconds,
   rankByOutlierScore,
   type LabRankedVideo,
@@ -228,5 +230,88 @@ describe("relative publication dates", () => {
     assert.equal(formatRelativePublished("not-a-date", NOW), "Unknown date");
     assert.equal(formatAbsolutePublished("nonsense"), "Unknown date");
     assert.equal(agoByDays(-9), "Scheduled");
+  });
+});
+
+describe("english-only filter", () => {
+  const NOW = "2026-08-27T12:00:00.000Z";
+  const make = (id: string, lang?: string, audio?: string): LabRankedVideo => ({
+    video: video({ id, defaultLanguage: lang, defaultAudioLanguage: audio, viewCount: 5_000 }),
+    score: score({ videoId: id, outlierScore: 4, bracket: "rising" }),
+  });
+
+  const entries = [
+    make("plain-en", undefined, "en"),
+    make("en-us", undefined, "en-US"),
+    make("en-gb", "en-GB"),
+    make("hindi", undefined, "hi"),
+    make("portuguese", "pt-BR"),
+    make("undeclared"),
+  ];
+
+  test("accepts every English variant", () => {
+    assert.ok(isEnglishVideo(video({ defaultAudioLanguage: "en" })));
+    assert.ok(isEnglishVideo(video({ defaultAudioLanguage: "en-US" })));
+    assert.ok(isEnglishVideo(video({ defaultLanguage: "EN-gb" })));
+  });
+
+  test("rejects other languages and undeclared videos", () => {
+    assert.equal(isEnglishVideo(video({ defaultAudioLanguage: "hi" })), false);
+    assert.equal(isEnglishVideo(video({ defaultLanguage: "pt-BR" })), false);
+    assert.equal(isEnglishVideo(video({})), false);
+  });
+
+  test("prefers the spoken language over the metadata language", () => {
+    // A video captioned in English but spoken in Hindi is not an English video.
+    assert.equal(isEnglishVideo(video({ defaultLanguage: "en", defaultAudioLanguage: "hi" })), false);
+  });
+
+  test("filters a lane down to English when enabled", () => {
+    const off = applyLabFilters(entries, defaultLabFilters, NOW);
+    assert.equal(off.length, 6);
+    const on = applyLabFilters(entries, { ...defaultLabFilters, englishOnly: true }, NOW);
+    assert.deepEqual(on.map((entry) => entry.video.id), ["plain-en", "en-us", "en-gb"]);
+  });
+});
+
+describe("filter funnel", () => {
+  const NOW = "2026-08-27T12:00:00.000Z";
+  const entries: LabRankedVideo[] = [
+    {
+      video: video({ id: "tiny", viewCount: 20_000, channelStatistics: { hiddenSubscriberCount: false, subscriberCount: 900 } }),
+      score: score({ videoId: "tiny", outlierScore: 8 }),
+    },
+    {
+      video: video({ id: "mid", viewCount: 50_000, channelStatistics: { hiddenSubscriberCount: false, subscriberCount: 90_000 } }),
+      score: score({ videoId: "mid", outlierScore: 6 }),
+    },
+    {
+      video: video({ id: "big", viewCount: 90_000, channelStatistics: { hiddenSubscriberCount: false, subscriberCount: 900_000 } }),
+      score: score({ videoId: "big", outlierScore: 5 }),
+    },
+  ];
+
+  test("reports only the filters actually in use", () => {
+    const rows = computeFilterFunnel(entries, { ...defaultLabFilters, minOutlierScore: 4 }, NOW);
+    assert.deepEqual(rows.map((row) => row.key), ["minOutlierScore"]);
+  });
+
+  test("scores each filter independently, exposing the tightest one", () => {
+    const rows = computeFilterFunnel(
+      entries,
+      { ...defaultLabFilters, minOutlierScore: 4, minViews: 10_000, maxSubscribers: 1_000 },
+      NOW,
+    );
+    const byKey = Object.fromEntries(rows.map((row) => [row.key, row.passing]));
+    assert.equal(byKey.minOutlierScore, 3);
+    assert.equal(byKey.minViews, 3);
+    // The subscriber ceiling is the binding constraint, admitting one video.
+    assert.equal(byKey.maxSubscribers, 1);
+    const tightest = rows.reduce((worst, row) => (row.passing < worst.passing ? row : worst));
+    assert.equal(tightest.key, "maxSubscribers");
+  });
+
+  test("returns nothing when no filter is active", () => {
+    assert.deepEqual(computeFilterFunnel(entries, defaultLabFilters, NOW), []);
   });
 });

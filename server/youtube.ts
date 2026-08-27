@@ -186,6 +186,9 @@ export interface SearchOverrides {
   // Exact ISO cutoff, for windows the coarse uploadDate enum cannot express
   // (for example "within 60 days"). Takes precedence over uploadDate.
   publishedAfter?: string;
+  // Biases results toward a language. YouTube treats this as a preference, not
+  // a guarantee, so callers still need to check each video's declared language.
+  relevanceLanguage?: string;
 }
 
 export async function searchVideos(
@@ -219,6 +222,10 @@ export async function searchVideos(
 
   if (overrides.pageToken) {
     params.set("pageToken", overrides.pageToken);
+  }
+
+  if (overrides.relevanceLanguage) {
+    params.set("relevanceLanguage", overrides.relevanceLanguage);
   }
 
   const videoDuration = getVideoDuration(filters.duration);

@@ -107,6 +107,7 @@ export const labFiltersSchema = z.object({
   minDurationSeconds: z.number().min(0).nullable().default(null),
   maxDurationSeconds: z.number().min(0).nullable().default(null),
   publishedWithinDays: z.number().min(1).nullable().default(null),
+  englishOnly: z.boolean().default(false),
 }).strict();
 
 export type LabFilters = z.infer<typeof labFiltersSchema>;
@@ -147,8 +148,48 @@ export function applyLabFilters(
       if (!Number.isFinite(published) || !Number.isFinite(now)) return false;
       if (now - published > filters.publishedWithinDays * 86_400_000) return false;
     }
+    if (filters.englishOnly && !isEnglishVideo(video)) return false;
     return true;
   });
+}
+
+// YouTube only reports a language when the uploader set one. When the creator
+// asks for English only, an undeclared video cannot be confirmed English, so it
+// is excluded rather than guessed at.
+export function isEnglishVideo(video: Video): boolean {
+  const declared = video.defaultAudioLanguage || video.defaultLanguage;
+  return typeof declared === "string" && declared.toLowerCase().startsWith("en");
+}
+
+export interface LabFilterFunnelRow {
+  key: string;
+  label: string;
+  active: boolean;
+  passing: number;
+}
+
+// How many fetched videos each active filter admits on its own. Tight filter
+// sets can collapse to nothing, and this shows which one is responsible
+// instead of leaving the creator to guess.
+export function computeFilterFunnel(
+  entries: LabRankedVideo[],
+  filters: LabFilters,
+  nowIso: string,
+): LabFilterFunnelRow[] {
+  const only = (patch: Partial<LabFilters>) =>
+    applyLabFilters(entries, { ...defaultLabFilters, ...patch }, nowIso).length;
+
+  const rows: LabFilterFunnelRow[] = [
+    { key: "minOutlierScore", label: "Min outlier", active: filters.minOutlierScore > 0, passing: only({ minOutlierScore: filters.minOutlierScore }) },
+    { key: "minViews", label: "Min views", active: filters.minViews > 0, passing: only({ minViews: filters.minViews }) },
+    { key: "minViewsPerHour", label: "Min VPH", active: filters.minViewsPerHour > 0, passing: only({ minViewsPerHour: filters.minViewsPerHour }) },
+    { key: "maxSubscribers", label: "Max subs", active: filters.maxSubscribers !== null, passing: only({ maxSubscribers: filters.maxSubscribers }) },
+    { key: "minDurationSeconds", label: "Min length", active: filters.minDurationSeconds !== null, passing: only({ minDurationSeconds: filters.minDurationSeconds }) },
+    { key: "maxDurationSeconds", label: "Max length", active: filters.maxDurationSeconds !== null, passing: only({ maxDurationSeconds: filters.maxDurationSeconds }) },
+    { key: "publishedWithinDays", label: "Within days", active: filters.publishedWithinDays !== null, passing: only({ publishedWithinDays: filters.publishedWithinDays }) },
+    { key: "englishOnly", label: "English only", active: filters.englishOnly, passing: only({ englishOnly: filters.englishOnly }) },
+  ];
+  return rows.filter((row) => row.active);
 }
 
 export function rankByOutlierScore(entries: LabRankedVideo[]): LabRankedVideo[] {

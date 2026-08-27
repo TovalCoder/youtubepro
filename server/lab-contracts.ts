@@ -16,6 +16,9 @@ export const labSearchRequestSchema = z.object({
   // Mirrors the client's recency filter so the window is applied inside the
   // YouTube query instead of only to what relevance ranking happened to return.
   publishedWithinDays: z.number().min(1).max(3_650).nullable().default(null),
+  // Biases the YouTube query toward English. The exact language check still
+  // happens against each video's declared language.
+  englishOnly: z.boolean().default(false),
 }).strict();
 
 export const labSeedsRequestSchema = z.object({

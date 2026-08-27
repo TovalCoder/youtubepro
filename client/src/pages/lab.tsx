@@ -26,6 +26,7 @@ import {
 import type { Video } from "@shared/schema";
 import {
   applyLabFilters,
+  computeFilterFunnel,
   defaultLabFilters,
   formatAbsolutePublished,
   formatRelativePublished,
@@ -302,6 +303,7 @@ export default function LabPage() {
   });
 
   const [searchDepth, setSearchDepth] = useState(2);
+  const [englishOnly, setEnglishOnly] = useState(false);
 
   const [tray, setTray] = useState<TrayReference[]>([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -399,8 +401,9 @@ export default function LabPage() {
       minDurationSeconds: num(filterDraft.minDurationMinutes) !== null ? (num(filterDraft.minDurationMinutes) as number) * 60 : null,
       maxDurationSeconds: num(filterDraft.maxDurationMinutes) !== null ? (num(filterDraft.maxDurationMinutes) as number) * 60 : null,
       publishedWithinDays: num(filterDraft.publishedWithinDays),
+      englishOnly,
     };
-  }, [filterDraft]);
+  }, [filterDraft, englishOnly]);
 
   const nowIso = useMemo(() => new Date().toISOString(), [lanes]);
 
@@ -448,6 +451,7 @@ export default function LabPage() {
         // Recency goes into the YouTube query itself, so the fetched pages are
         // already inside the window instead of being filtered down to nothing.
         publishedWithinDays: filters.publishedWithinDays,
+        englishOnly,
       });
       const scoreById = new Map(data.scores.map((score) => [score.videoId, score]));
       const entries: LabRankedVideo[] = data.search.videos
@@ -738,6 +742,20 @@ export default function LabPage() {
               />
             </div>
           ))}
+          <div className="col-span-2 flex items-center gap-2 md:col-span-4 lg:col-span-7">
+            <Checkbox
+              id="lab-english"
+              checked={englishOnly}
+              onCheckedChange={(checked) => setEnglishOnly(checked === true)}
+              data-testid="checkbox-english-only"
+            />
+            <Label htmlFor="lab-english" className="text-xs font-normal">
+              English only
+              <span className="ml-1 text-muted-foreground">
+                (asks YouTube for English and keeps only videos whose declared language is English; videos with no declared language are excluded)
+              </span>
+            </Label>
+          </div>
           <div className="col-span-2 space-y-1 md:col-span-4 lg:col-span-7">
             <Label htmlFor="lab-depth" className="text-xs">
               Search depth: {searchDepth} page{searchDepth === 1 ? "" : "s"} ({searchDepth * 50} videos per lane, {searchDepth * 100} quota units)
@@ -818,10 +836,35 @@ export default function LabPage() {
               {state.error && <FailureNote failure={state.error} />}
 
               {state.entries.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  Showing {visible.length} of {state.entries.length} fetched videos after filters. Star a thumbnail to add it to the reference tray.
-                  {visible.length === 0 && " Nothing survived the filters: widen a filter, or raise search depth to fetch more candidates."}
-                </p>
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground">
+                    Showing {visible.length} of {state.entries.length} fetched videos after filters. Star a thumbnail to add it to the reference tray.
+                  </p>
+                  {(() => {
+                    const funnel = computeFilterFunnel(state.entries, filters, nowIso);
+                    if (funnel.length === 0) return null;
+                    const tightest = funnel.reduce((worst, row) => (row.passing < worst.passing ? row : worst));
+                    return (
+                      <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                        <span className="text-muted-foreground">Each filter alone admits:</span>
+                        {funnel.map((row) => (
+                          <Badge
+                            key={row.key}
+                            variant={row.key === tightest.key ? "destructive" : "secondary"}
+                            className="font-normal"
+                          >
+                            {row.label} {row.passing}
+                          </Badge>
+                        ))}
+                        {visible.length < 5 && (
+                          <span className="text-muted-foreground">
+                            Tightest is {tightest.label}. Loosen it, or raise search depth.
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
+                </div>
               )}
 
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -830,12 +873,20 @@ export default function LabPage() {
                   return (
                     <div key={entry.video.id} className="group overflow-hidden rounded-lg border border-border bg-card" data-testid={`video-card-${entry.video.id}`}>
                       <div className="relative aspect-video bg-muted">
-                        <img
-                          src={entry.video.thumbnailUrl}
-                          alt={entry.video.title}
-                          loading="lazy"
-                          className="h-full w-full object-cover"
-                        />
+                        <a
+                          href={`https://www.youtube.com/watch?v=${entry.video.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={`Watch "${entry.video.title}" on YouTube`}
+                          data-testid={`link-watch-${entry.video.id}`}
+                        >
+                          <img
+                            src={entry.video.thumbnailUrl}
+                            alt={entry.video.title}
+                            loading="lazy"
+                            className="h-full w-full object-cover transition-opacity hover:opacity-90"
+                          />
+                        </a>
                         <div className="absolute left-2 top-2 flex gap-1.5">
                           <Badge className={bracketClasses(entry.score.bracket)}>{formatScore(entry.score.outlierScore)}</Badge>
                           {entry.score.viewsPerHour !== null && (
@@ -856,7 +907,15 @@ export default function LabPage() {
                         </button>
                       </div>
                       <div className="space-y-1 p-3">
-                        <p className="line-clamp-2 text-sm font-medium leading-snug">{entry.video.title}</p>
+                        <a
+                          href={`https://www.youtube.com/watch?v=${entry.video.id}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="line-clamp-2 block text-sm font-medium leading-snug hover:underline"
+                          data-testid={`link-title-${entry.video.id}`}
+                        >
+                          {entry.video.title}
+                        </a>
                         <p className="text-xs text-muted-foreground">
                           {entry.video.channelTitle} · {formatCount(entry.video.channelStatistics?.subscriberCount)} subs
                         </p>
