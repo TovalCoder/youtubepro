@@ -388,3 +388,39 @@ describe("topic match", () => {
     assert.deepEqual(computeFilterFunnel(entries, defaultLabFilters, NOW), []);
   });
 });
+
+describe("isolating one filter while keeping length bounds", () => {
+  const NOW = "2026-08-27T12:00:00.000Z";
+  const entry = (id: string, outlier: number, durationSeconds: number): LabRankedVideo => ({
+    video: video({ id, viewCount: 50, channelStatistics: { hiddenSubscriberCount: false, subscriberCount: 5_000_000 } }),
+    score: score({ videoId: id, outlierScore: outlier, durationSeconds }),
+  });
+
+  // A Short and a long-form video, both strong outliers, both failing the
+  // other thresholds a full rubric would impose.
+  const entries = [entry("short", 500, 34), entry("long", 4, 900), entry("weak", 1, 900)];
+
+  // What the lane builds when a line in the explainer is clicked.
+  const isolate = (key: keyof LabFilters, value: unknown, minDurationSeconds: number | null) =>
+    applyLabFilters(
+      entries,
+      { ...defaultLabFilters, [key]: value, minDurationSeconds } as LabFilters,
+      NOW,
+    ).map((item) => item.video.id);
+
+  test("keeps the isolated filter and drops the rest", () => {
+    assert.deepEqual(isolate("minOutlierScore", 3, null), ["short", "long"]);
+  });
+
+  test("still excludes Shorts when a length floor is set", () => {
+    assert.deepEqual(isolate("minOutlierScore", 3, 240), ["long"]);
+  });
+
+  test("the length floor does not resurrect videos the isolated filter rejected", () => {
+    assert.ok(!isolate("minOutlierScore", 3, 240).includes("weak"));
+  });
+
+  test("isolating the length filter itself behaves normally", () => {
+    assert.deepEqual(isolate("minDurationSeconds", 240, 240), ["long", "weak"]);
+  });
+});

@@ -361,7 +361,7 @@ function FilterExplainer({
             ))}
           </ul>
           <p className="text-muted-foreground">
-            Click any line to see just those videos, ignoring the other filters.
+            Click any line to see just those videos. The other filters are ignored, except your length limits, which stay on so Shorts do not come back.
           </p>
           <p>
             But a video has to be in <strong>every one</strong> of those groups at the same time, and they
@@ -529,7 +529,14 @@ export default function LabPage() {
       };
       const soloKey = soloFilter?.lane === lane.id ? soloFilter.key : null;
       const applied = soloKey
-        ? ({ ...defaultLabFilters, [soloKey]: laneFilters[soloKey as keyof LabFilters] } as LabFilters)
+        ? ({
+            ...defaultLabFilters,
+            [soloKey]: laneFilters[soloKey as keyof LabFilters],
+            // Length bounds are what exclude Shorts, so isolating another
+            // filter must not quietly let them back in.
+            minDurationSeconds: laneFilters.minDurationSeconds,
+            maxDurationSeconds: laneFilters.maxDurationSeconds,
+          } as LabFilters)
         : laneFilters;
       result[lane.id] = rankByOutlierScore(applyLabFilters(lanes[lane.id].entries, applied, nowIso));
     }
@@ -976,8 +983,28 @@ export default function LabPage() {
                   {soloFilter?.lane === lane.id ? (
                     <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-1.5 text-xs">
                       <span>
-                        Showing all <strong>{visible.length}</strong> videos that pass{" "}
-                        <strong>{computeFilterFunnel(state.entries, filtersForLane(lane.id), nowIso).find((row) => row.key === soloFilter.key)?.label ?? soloFilter.key}</strong> on its own. The other filters are ignored.
+                        {(() => {
+                          const laneFilters = filtersForLane(lane.id);
+                          const label = computeFilterFunnel(state.entries, laneFilters, nowIso)
+                            .find((row) => row.key === soloFilter.key)?.label ?? soloFilter.key;
+                          const soloOnly = applyLabFilters(
+                            state.entries,
+                            { ...defaultLabFilters, [soloFilter.key]: laneFilters[soloFilter.key as keyof LabFilters] } as LabFilters,
+                            nowIso,
+                          ).length;
+                          const lengthActive = laneFilters.minDurationSeconds !== null || laneFilters.maxDurationSeconds !== null;
+                          const trimmed = soloOnly - visible.length;
+                          return (
+                            <>
+                              Showing <strong>{visible.length}</strong> videos that pass <strong>{label}</strong>.
+                              {lengthActive
+                                ? trimmed > 0
+                                  ? ` Every other filter is ignored, except the length limits, which removed ${trimmed} short ${trimmed === 1 ? "video" : "videos"} from the ${soloOnly} that passed.`
+                                  : " Every other filter is ignored, except the length limits, which stay on to keep Shorts out."
+                                : " Every other filter is ignored."}
+                            </>
+                          );
+                        })()}
                       </span>
                       <Button
                         size="sm"
