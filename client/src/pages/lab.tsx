@@ -291,8 +291,10 @@ function FilterExplainer({
   nowIso,
   showing,
   fetched,
+  onSolo,
 }: {
   rows: LabFilterFunnelRow[];
+  onSolo: (key: string) => void;
   filters: LabFilters;
   entries: LabRankedVideo[];
   nowIso: string;
@@ -341,12 +343,23 @@ function FilterExplainer({
           <p className="text-muted-foreground">Out of {fetched} videos fetched:</p>
           <ul className="space-y-1">
             {rows.map((row) => (
-              <li key={row.key} className={row.key === tightest.key ? "font-medium" : ""}>
-                <span className="tabular-nums">{row.passing}</span> {describe(row)}
-                {row.key === tightest.key && <span className="text-destructive"> &larr; fewest</span>}
+              <li key={row.key}>
+                <button
+                  type="button"
+                  onClick={() => onSolo(row.key)}
+                  className={`text-left hover:underline ${row.key === tightest.key ? "font-medium" : ""}`}
+                  data-testid={`button-solo-${row.key}`}
+                >
+                  <span className="tabular-nums">{row.passing}</span> {describe(row)}
+                  {row.key === tightest.key && <span className="text-destructive"> &larr; fewest</span>}
+                  <span className="ml-1 text-primary">show these {row.passing}</span>
+                </button>
               </li>
             ))}
           </ul>
+          <p className="text-muted-foreground">
+            Click any line to see just those videos, ignoring the other filters.
+          </p>
           <p>
             But a video has to be in <strong>every one</strong> of those groups at the same time, and they
             barely overlap. Only <strong>{showing}</strong> {showing === 1 ? "video is" : "videos are"} in all{" "}
@@ -391,6 +404,9 @@ export default function LabPage() {
   });
 
   const [searchDepth, setSearchDepth] = useState(2);
+  // Lets one filter be viewed on its own. Outliers matter enough on their own
+  // that they should be reachable without satisfying the rest of the rubric.
+  const [soloFilter, setSoloFilter] = useState<{ lane: LabLane; key: string } | null>(null);
   const [englishOnly, setEnglishOnly] = useState(false);
 
   const [tray, setTray] = useState<TrayReference[]>([]);
@@ -498,10 +514,14 @@ export default function LabPage() {
   const visibleByLane = useMemo(() => {
     const result: Record<LabLane, LabRankedVideo[]> = { niche: [], adjacent: [], wildcard: [] };
     for (const lane of LANES) {
-      result[lane.id] = rankByOutlierScore(applyLabFilters(lanes[lane.id].entries, filters, nowIso));
+      const soloKey = soloFilter?.lane === lane.id ? soloFilter.key : null;
+      const applied = soloKey
+        ? ({ ...defaultLabFilters, [soloKey]: filters[soloKey as keyof LabFilters] } as LabFilters)
+        : filters;
+      result[lane.id] = rankByOutlierScore(applyLabFilters(lanes[lane.id].entries, applied, nowIso));
     }
     return result;
-  }, [lanes, filters, nowIso]);
+  }, [lanes, filters, nowIso, soloFilter]);
 
   const evidence = useMemo(() => {
     const lines: Array<{ score: number; line: string }> = [];
@@ -530,6 +550,7 @@ export default function LabPage() {
       updateLane(lane, { error: { error: "Add a search topic first", suggestion: "Type what this lane should search for." } });
       return;
     }
+    setSoloFilter((current) => (current?.lane === lane ? null : current));
     updateLane(lane, { loading: true, error: null });
     try {
       const data = await postJson<{ search: { videos: Video[] }; scores: LabVideoScore[]; pagesFetched: number }>("/api/lab/search", {
@@ -925,9 +946,27 @@ export default function LabPage() {
 
               {state.entries.length > 0 && (
                 <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground">
-                    Showing {visible.length} of {state.entries.length} fetched videos after filters. Star a thumbnail to add it to the reference tray.
-                  </p>
+                  {soloFilter?.lane === lane.id ? (
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-1.5 text-xs">
+                      <span>
+                        Showing all <strong>{visible.length}</strong> videos that pass{" "}
+                        <strong>{computeFilterFunnel(state.entries, filters, nowIso).find((row) => row.key === soloFilter.key)?.label ?? soloFilter.key}</strong> on its own. The other filters are ignored.
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setSoloFilter(null)}
+                        data-testid={`button-clear-solo-${lane.id}`}
+                      >
+                        Back to all filters
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Showing {visible.length} of {state.entries.length} fetched videos after filters. Star a thumbnail to add it to the reference tray.
+                    </p>
+                  )}
                   {(() => {
                     const funnel = computeFilterFunnel(state.entries, filters, nowIso);
                     if (funnel.length === 0) return null;
@@ -949,7 +988,7 @@ export default function LabPage() {
                             Tightest is {tightest.label}. Loosen it, or raise search depth.
                           </span>
                         )}
-                        <FilterExplainer rows={funnel} filters={filters} entries={state.entries} nowIso={nowIso} showing={visible.length} fetched={state.entries.length} />
+                        <FilterExplainer rows={funnel} filters={filters} entries={state.entries} nowIso={nowIso} showing={visible.length} fetched={state.entries.length} onSolo={(key) => setSoloFilter({ lane: lane.id, key })} />
                       </div>
                     );
                   })()}
