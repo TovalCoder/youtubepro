@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -275,6 +276,66 @@ function FailureNote({ failure }: { failure: RequestFailure }) {
       <AlertTitle>{failure.error}</AlertTitle>
       <AlertDescription>{failure.suggestion}</AlertDescription>
     </Alert>
+  );
+}
+
+
+// Plain-language key for the funnel badges. The badge row reports each filter
+// in isolation, which cannot show that the videos passing one filter are
+// mostly not the videos passing another, so the empty-result case gets an
+// explicit explanation rather than leaving it to be inferred.
+function FilterExplainer({
+  tightestLabel,
+  showing,
+  fetched,
+}: {
+  tightestLabel: string;
+  showing: number;
+  fetched: number;
+}) {
+  const terms: Array<{ term: string; meaning: string }> = [
+    { term: "Min outlier x", meaning: "How many times more views a video got than that channel's own typical video. 3x means triple its usual. High score on a small channel means the packaging did the work." },
+    { term: "Min views", meaning: "Total views the video has, all time." },
+    { term: "Min VPH", meaning: "Views per hour since it was published. Shows how fast it is moving, not how big it got." },
+    { term: "Max subs", meaning: "Biggest channel you want to see. Lower this to find small channels; it is usually the filter that empties your results." },
+    { term: "Min length / Max length", meaning: "Video duration in minutes. Set a minimum to exclude Shorts." },
+    { term: "Within days", meaning: "How recently it was published. This one also narrows the YouTube search itself." },
+    { term: "English only", meaning: "Keeps videos whose uploader declared English. Videos with no declared language are excluded." },
+  ];
+
+  return (
+    <Accordion type="single" collapsible className="w-full basis-full">
+      <AccordionItem value="explain" className="border-none">
+        <AccordionTrigger className="py-1 text-xs font-normal text-muted-foreground hover:no-underline">
+          What do these numbers mean?
+        </AccordionTrigger>
+        <AccordionContent className="space-y-3 pb-2 text-xs leading-relaxed">
+          <p>
+            Each badge shows how many of the {fetched} fetched videos that filter would allow through
+            <strong> on its own</strong>. It is a count of videos, not a setting.
+          </p>
+          {showing === 0 && (
+            <p className="rounded-md border border-border bg-muted/50 p-2">
+              <strong>Why you are seeing 0.</strong> A video has to pass every filter at the same time.
+              The videos that clear one filter are mostly not the same videos that clear another, so the
+              overlap can be empty even when each badge looks healthy. Start by loosening{" "}
+              <strong>{tightestLabel}</strong>, then re-run the search.
+            </p>
+          )}
+          <dl className="space-y-1.5">
+            {terms.map((entry) => (
+              <div key={entry.term}>
+                <dt className="inline font-medium">{entry.term}: </dt>
+                <dd className="inline text-muted-foreground">{entry.meaning}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="text-muted-foreground">
+            Search depth only fetches more candidates. If a filter is the problem, more depth will not help.
+          </p>
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
   );
 }
 
@@ -861,6 +922,7 @@ export default function LabPage() {
                             Tightest is {tightest.label}. Loosen it, or raise search depth.
                           </span>
                         )}
+                        <FilterExplainer tightestLabel={tightest.label} showing={visible.length} fetched={state.entries.length} />
                       </div>
                     );
                   })()}
