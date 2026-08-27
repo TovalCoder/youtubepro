@@ -32,6 +32,7 @@ import {
   formatAbsolutePublished,
   formatRelativePublished,
   rankByOutlierScore,
+  topicMatchTerms,
   type LabFilterFunnelRow,
   type LabFilters,
   type LabLane,
@@ -319,6 +320,8 @@ function FilterExplainer({
         return `were published in the last ${filters.publishedWithinDays} days`;
       case "englishOnly":
         return "are declared English by their uploader";
+      case "topicMatchQuery":
+        return `actually mention ${topicMatchTerms(filters.topicMatchQuery || "").map((term) => JSON.stringify(term)).join(" and ")} in their title, tags, or description`;
       default:
         return "pass this filter";
     }
@@ -408,6 +411,7 @@ export default function LabPage() {
   // that they should be reachable without satisfying the rest of the rubric.
   const [soloFilter, setSoloFilter] = useState<{ lane: LabLane; key: string } | null>(null);
   const [englishOnly, setEnglishOnly] = useState(false);
+  const [topicMatch, setTopicMatch] = useState(true);
 
   const [tray, setTray] = useState<TrayReference[]>([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -511,17 +515,26 @@ export default function LabPage() {
 
   const nowIso = useMemo(() => new Date().toISOString(), [lanes]);
 
+  const filtersForLane = (lane: LabLane): LabFilters => ({
+    ...filters,
+    topicMatchQuery: topicMatch ? lanes[lane].query.trim() || null : null,
+  });
+
   const visibleByLane = useMemo(() => {
     const result: Record<LabLane, LabRankedVideo[]> = { niche: [], adjacent: [], wildcard: [] };
     for (const lane of LANES) {
+      const laneFilters: LabFilters = {
+        ...filters,
+        topicMatchQuery: topicMatch ? lanes[lane.id].query.trim() || null : null,
+      };
       const soloKey = soloFilter?.lane === lane.id ? soloFilter.key : null;
       const applied = soloKey
-        ? ({ ...defaultLabFilters, [soloKey]: filters[soloKey as keyof LabFilters] } as LabFilters)
-        : filters;
+        ? ({ ...defaultLabFilters, [soloKey]: laneFilters[soloKey as keyof LabFilters] } as LabFilters)
+        : laneFilters;
       result[lane.id] = rankByOutlierScore(applyLabFilters(lanes[lane.id].entries, applied, nowIso));
     }
     return result;
-  }, [lanes, filters, nowIso, soloFilter]);
+  }, [lanes, filters, nowIso, soloFilter, topicMatch]);
 
   const evidence = useMemo(() => {
     const lines: Array<{ score: number; line: string }> = [];
@@ -853,6 +866,20 @@ export default function LabPage() {
           ))}
           <div className="col-span-2 flex items-center gap-2 md:col-span-4 lg:col-span-7">
             <Checkbox
+              id="lab-topic-match"
+              checked={topicMatch}
+              onCheckedChange={(checked) => setTopicMatch(checked === true)}
+              data-testid="checkbox-topic-match"
+            />
+            <Label htmlFor="lab-topic-match" className="text-xs font-normal">
+              Topic match
+              <span className="ml-1 text-muted-foreground">
+                (drops videos that do not mention your search words. YouTube pads deep result pages with loosely-related videos, and this removes them)
+              </span>
+            </Label>
+          </div>
+          <div className="col-span-2 flex items-center gap-2 md:col-span-4 lg:col-span-7">
+            <Checkbox
               id="lab-english"
               checked={englishOnly}
               onCheckedChange={(checked) => setEnglishOnly(checked === true)}
@@ -881,7 +908,7 @@ export default function LabPage() {
               data-testid="input-lab-depth"
             />
             <p className="text-xs text-muted-foreground">
-              Tight filters need more depth. Six pages is 300 candidates per lane and still only 600 of your 10,000 daily units.
+              Tight filters need more depth, but YouTube's relevance drops sharply after page 2: on a sample search, page 1 was 90% on-topic and page 3 was 22%. Keep Topic match on when going deep.
             </p>
           </div>
         </CardContent>
@@ -950,7 +977,7 @@ export default function LabPage() {
                     <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/40 bg-primary/10 px-2 py-1.5 text-xs">
                       <span>
                         Showing all <strong>{visible.length}</strong> videos that pass{" "}
-                        <strong>{computeFilterFunnel(state.entries, filters, nowIso).find((row) => row.key === soloFilter.key)?.label ?? soloFilter.key}</strong> on its own. The other filters are ignored.
+                        <strong>{computeFilterFunnel(state.entries, filtersForLane(lane.id), nowIso).find((row) => row.key === soloFilter.key)?.label ?? soloFilter.key}</strong> on its own. The other filters are ignored.
                       </span>
                       <Button
                         size="sm"
@@ -968,7 +995,8 @@ export default function LabPage() {
                     </p>
                   )}
                   {(() => {
-                    const funnel = computeFilterFunnel(state.entries, filters, nowIso);
+                    const laneFilters = filtersForLane(lane.id);
+                    const funnel = computeFilterFunnel(state.entries, laneFilters, nowIso);
                     if (funnel.length === 0) return null;
                     const tightest = funnel.reduce((worst, row) => (row.passing < worst.passing ? row : worst));
                     return (
@@ -988,7 +1016,7 @@ export default function LabPage() {
                             Tightest is {tightest.label}. Loosen it, or raise search depth.
                           </span>
                         )}
-                        <FilterExplainer rows={funnel} filters={filters} entries={state.entries} nowIso={nowIso} showing={visible.length} fetched={state.entries.length} onSolo={(key) => setSoloFilter({ lane: lane.id, key })} />
+                        <FilterExplainer rows={funnel} filters={laneFilters} entries={state.entries} nowIso={nowIso} showing={visible.length} fetched={state.entries.length} onSolo={(key) => setSoloFilter({ lane: lane.id, key })} />
                       </div>
                     );
                   })()}

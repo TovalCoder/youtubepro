@@ -108,6 +108,9 @@ export const labFiltersSchema = z.object({
   maxDurationSeconds: z.number().min(0).nullable().default(null),
   publishedWithinDays: z.number().min(1).nullable().default(null),
   englishOnly: z.boolean().default(false),
+  // When set, every distinctive word in this query must appear in the video's
+  // own text. Null disables the check.
+  topicMatchQuery: z.string().nullable().default(null),
 }).strict();
 
 export type LabFilters = z.infer<typeof labFiltersSchema>;
@@ -149,6 +152,7 @@ export function applyLabFilters(
       if (now - published > filters.publishedWithinDays * 86_400_000) return false;
     }
     if (filters.englishOnly && !isEnglishVideo(video)) return false;
+    if (filters.topicMatchQuery && !matchesQueryTopic(video, filters.topicMatchQuery)) return false;
     return true;
   });
 }
@@ -159,6 +163,38 @@ export function applyLabFilters(
 export function isEnglishVideo(video: Video): boolean {
   const declared = video.defaultAudioLanguage || video.defaultLanguage;
   return typeof declared === "string" && declared.toLowerCase().startsWith("en");
+}
+
+// Words too common to distinguish one video from another.
+const TOPIC_STOPWORDS = new Set([
+  "the", "and", "for", "with", "your", "you", "how", "why", "what", "from",
+  "this", "that", "best", "top", "new", "make", "making", "guide", "tips",
+  "video", "videos", "tutorial", "free", "full", "step", "steps", "about",
+]);
+
+export function topicMatchTerms(query: string): string[] {
+  return Array.from(new Set(
+    query
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((term) => term.length >= 5 && !TOPIC_STOPWORDS.has(term)),
+  ));
+}
+
+// YouTube's search relevance degrades sharply on deep result pages, which fills
+// a lane with videos that merely share a word with the query. This checks the
+// video's own text instead of trusting result position: every distinctive query
+// term must appear somewhere in its title, tags, description, or channel name.
+export function matchesQueryTopic(video: Video, query: string): boolean {
+  const terms = topicMatchTerms(query);
+  if (terms.length === 0) return true;
+  const haystack = [
+    video.title,
+    video.channelTitle,
+    video.description?.slice(0, 1_500) || "",
+    (video.tags || []).join(" "),
+  ].join(" ").toLowerCase();
+  return terms.every((term) => haystack.includes(term));
 }
 
 export interface LabFilterFunnelRow {
@@ -188,6 +224,7 @@ export function computeFilterFunnel(
     { key: "maxDurationSeconds", label: "Max length", active: filters.maxDurationSeconds !== null, passing: only({ maxDurationSeconds: filters.maxDurationSeconds }) },
     { key: "publishedWithinDays", label: "Within days", active: filters.publishedWithinDays !== null, passing: only({ publishedWithinDays: filters.publishedWithinDays }) },
     { key: "englishOnly", label: "English only", active: filters.englishOnly, passing: only({ englishOnly: filters.englishOnly }) },
+    { key: "topicMatchQuery", label: "Topic match", active: Boolean(filters.topicMatchQuery), passing: only({ topicMatchQuery: filters.topicMatchQuery }) },
   ];
   return rows.filter((row) => row.active);
 }

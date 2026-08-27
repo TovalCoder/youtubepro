@@ -12,8 +12,10 @@ import {
   median,
   outlierBracket,
   isEnglishVideo,
+  matchesQueryTopic,
   parseIsoDurationSeconds,
   rankByOutlierScore,
+  topicMatchTerms,
   type LabRankedVideo,
   type LabVideoScore,
 } from "./lab";
@@ -312,6 +314,77 @@ describe("filter funnel", () => {
   });
 
   test("returns nothing when no filter is active", () => {
+    assert.deepEqual(computeFilterFunnel(entries, defaultLabFilters, NOW), []);
+  });
+});
+
+describe("topic match", () => {
+  const NOW = "2026-08-27T12:00:00.000Z";
+
+  test("extracts only distinctive terms", () => {
+    assert.deepEqual(topicMatchTerms("google dropshipping"), ["google", "dropshipping"]);
+    // Short words and filler carry no signal.
+    assert.deepEqual(topicMatchTerms("how to make money with ads"), ["money"]);
+    assert.deepEqual(topicMatchTerms("best free full guide"), []);
+  });
+
+  test("keeps videos that genuinely cover the query", () => {
+    assert.ok(matchesQueryTopic(
+      video({ title: "How I made $169k in 30 days with Google Ads Dropshipping" }),
+      "google dropshipping",
+    ));
+  });
+
+  test("drops the loosely-related videos YouTube pads deep pages with", () => {
+    // Both were reported appearing under a Google dropshipping search.
+    assert.equal(matchesQueryTopic(
+      video({ title: "She Heard Her Mom Fighting In The Next Room So She Went & Beat The Socks Off Her Mom's Friend", channelTitle: "Still Hustle Daily" }),
+      "google dropshipping",
+    ), false);
+    assert.equal(matchesQueryTopic(
+      video({ title: "She Let Her Boss Move In & Started An Intimate Relationship", channelTitle: "Still Hustle Daily" }),
+      "google dropshipping",
+    ), false);
+    // Sharing one word with the query is not enough.
+    assert.equal(matchesQueryTopic(
+      video({ title: "Google's FREE Tool Builds Apps While You Sleep" }),
+      "google dropshipping",
+    ), false);
+  });
+
+  test("looks beyond the title, into tags and description", () => {
+    assert.ok(matchesQueryTopic(
+      video({ title: "My first $10k month", description: "Everything I did with Google Ads for my dropshipping store." }),
+      "google dropshipping",
+    ));
+    assert.ok(matchesQueryTopic(
+      video({ title: "The 3 day test", tags: ["google ads", "dropshipping"] }),
+      "google dropshipping",
+    ));
+  });
+
+  test("passes everything when the query has no distinctive terms", () => {
+    assert.ok(matchesQueryTopic(video({ title: "Anything at all" }), "how to"));
+  });
+
+  test("applies as a lane filter and reports in the funnel", () => {
+    const entries: LabRankedVideo[] = [
+      { video: video({ id: "on", title: "Google Ads Dropshipping case study" }), score: score({ videoId: "on" }) },
+      { video: video({ id: "off", title: "She Heard Her Mom Fighting" }), score: score({ videoId: "off" }) },
+    ];
+    const filtered = applyLabFilters(entries, { ...defaultLabFilters, topicMatchQuery: "google dropshipping" }, NOW);
+    assert.deepEqual(filtered.map((entry) => entry.video.id), ["on"]);
+
+    const rows = computeFilterFunnel(entries, { ...defaultLabFilters, topicMatchQuery: "google dropshipping" }, NOW);
+    assert.deepEqual(rows.map((row) => row.key), ["topicMatchQuery"]);
+    assert.equal(rows[0].passing, 1);
+  });
+
+  test("is inert when no query is set", () => {
+    const entries: LabRankedVideo[] = [
+      { video: video({ id: "a", title: "Totally unrelated" }), score: score({ videoId: "a" }) },
+    ];
+    assert.equal(applyLabFilters(entries, defaultLabFilters, NOW).length, 1);
     assert.deepEqual(computeFilterFunnel(entries, defaultLabFilters, NOW), []);
   });
 });
