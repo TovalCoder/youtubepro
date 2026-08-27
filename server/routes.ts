@@ -16,6 +16,22 @@ import {
   titleRegenerationRequestSchema,
 } from "./api-contracts";
 import { createRateLimiter } from "./rate-limit";
+import {
+  labAnalyzeRequestSchema,
+  labConceptsRequestSchema,
+  labRenderRequestSchema,
+  labSearchRequestSchema,
+  labSeedsRequestSchema,
+  labTopicsRequestSchema,
+} from "./lab-contracts";
+import { scoreVideosForLab } from "./outlier";
+import {
+  analyzeThumbnailPatterns,
+  generateLabTopics,
+  generatePackagingConcepts,
+  generateWildcardSeeds,
+  renderLabConcept,
+} from "./thumbnail-lab";
 
 const { middleware: rateLimit } = createRateLimiter();
 
@@ -290,6 +306,154 @@ export async function registerRoutes(
       console.error("Thumbnail suggestions error:", error);
       const providerError = normalizeProviderError(error, "gemini");
       res.status(providerError.status).json(providerErrorPayload(providerError, "Gemini thumbnail suggestions"));
+    }
+  });
+
+  app.post("/api/lab/search", rateLimit, async (req, res) => {
+    try {
+      const parsed = labSearchRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid lab search request",
+          code: "LAB_SEARCH_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Review the lane and search filters, then try again.",
+          details: parsed.error.flatten(),
+        });
+      }
+      const search = await searchVideos(parsed.data.filters);
+      const scores = await scoreVideosForLab(search.videos);
+      res.json({ lane: parsed.data.lane, search, scores });
+    } catch (error: unknown) {
+      console.error("Lab search error:", error);
+      const providerError = normalizeProviderError(error, "youtube");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Lab outlier search"));
+    }
+  });
+
+  app.post("/api/lab/seeds", rateLimit, async (req, res) => {
+    try {
+      const parsed = labSeedsRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid wildcard seed request",
+          code: "LAB_SEEDS_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Provide your niche so unrelated seed topics can be proposed.",
+          details: parsed.error.flatten(),
+        });
+      }
+      const seeds = await generateWildcardSeeds(parsed.data.niche, parsed.data.avoid, parsed.data.count);
+      res.json({ seeds });
+    } catch (error: unknown) {
+      console.error("Lab seeds error:", error);
+      const providerError = normalizeProviderError(error, "gemini");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Lab wildcard seeds"));
+    }
+  });
+
+  app.post("/api/lab/analyze", rateLimit, async (req, res) => {
+    try {
+      const parsed = labAnalyzeRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid pattern analysis request",
+          code: "LAB_ANALYZE_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Select between 1 and 12 reference thumbnails and set a topic.",
+          details: parsed.error.flatten(),
+        });
+      }
+      const result = await analyzeThumbnailPatterns(parsed.data.topic, parsed.data.references);
+      res.json(result);
+    } catch (error: unknown) {
+      console.error("Lab analyze error:", error);
+      const providerError = normalizeProviderError(error, "gemini");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Lab pattern analysis"));
+    }
+  });
+
+  app.post("/api/lab/concepts", rateLimit, async (req, res) => {
+    try {
+      const parsed = labConceptsRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid packaging concepts request",
+          code: "LAB_CONCEPTS_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Set a topic, and confirm rights for any uploaded reference images.",
+          details: parsed.error.flatten(),
+        });
+      }
+      const concepts = await generatePackagingConcepts(
+        parsed.data.topic,
+        parsed.data.angle,
+        parsed.data.patternSynthesis,
+        parsed.data.referenceImages.length > 0,
+      );
+      res.json({ concepts });
+    } catch (error: unknown) {
+      console.error("Lab concepts error:", error);
+      const providerError = normalizeProviderError(error, "gemini");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Lab packaging concepts"));
+    }
+  });
+
+  app.post("/api/lab/render", rateLimit, async (req, res) => {
+    try {
+      const parsed = labRenderRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid render request",
+          code: "LAB_RENDER_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Render a generated concept, and confirm rights for any uploaded reference images.",
+          details: parsed.error.flatten(),
+        });
+      }
+      const result = await renderLabConcept(
+        parsed.data.title,
+        parsed.data.thumbnailText,
+        parsed.data.imageSpec,
+        parsed.data.referenceImages,
+      );
+      res.json(result);
+    } catch (error: unknown) {
+      console.error("Lab render error:", error);
+      const providerError = normalizeProviderError(error, "gemini");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Lab thumbnail render"));
+    }
+  });
+
+  app.post("/api/lab/topics", rateLimit, async (req, res) => {
+    try {
+      const parsed = labTopicsRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({
+          error: "Invalid topic request",
+          code: "LAB_TOPICS_REQUEST_INVALID",
+          category: "invalid_response",
+          retryable: false,
+          suggestion: "Set your niche, and include the topic when refining one.",
+          details: parsed.error.flatten(),
+        });
+      }
+      const suggestions = await generateLabTopics(
+        parsed.data.mode,
+        parsed.data.niche,
+        parsed.data.topic,
+        parsed.data.evidence,
+      );
+      res.json({ suggestions });
+    } catch (error: unknown) {
+      console.error("Lab topics error:", error);
+      const providerError = normalizeProviderError(error, "gemini");
+      res.status(providerError.status).json(providerErrorPayload(providerError, "Lab topic packages"));
     }
   });
 

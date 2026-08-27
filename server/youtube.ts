@@ -122,7 +122,7 @@ function youtubeHttpError(status: number, body: unknown, stage: string): Provide
   });
 }
 
-async function fetchYouTubeJson(url: string, stage: string): Promise<any> {
+export async function fetchYouTubeJson(url: string, stage: string): Promise<any> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), YOUTUBE_TIMEOUT_MS);
   try {

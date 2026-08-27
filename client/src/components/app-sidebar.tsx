@@ -38,7 +38,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Search, FileText, Play, Settings, Rocket, Check, ArrowRight, Image, History, Loader2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
+import { Search, FileText, Play, Settings, Rocket, Check, ArrowRight, Image, FlaskConical, History, Loader2, MoreHorizontal, Pencil, Trash2 } from "lucide-react";
 import { useWorkflow } from "@/lib/workflow-context";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNowStrict } from "date-fns";
@@ -60,6 +60,12 @@ const menuItems = [
     title: "Thumbnail Creator",
     url: "/thumbnail",
     icon: Image,
+    step: "thumbnail" as const,
+  },
+  {
+    title: "Thumbnail Lab",
+    url: "/lab",
+    icon: FlaskConical,
     step: "thumbnail" as const,
   },
 ];

@@ -14,6 +14,7 @@ import ResearchDashboard from "@/pages/research";
 import ScriptPage from "@/pages/script";
 import SettingsPage from "@/pages/settings";
 import ThumbnailPage from "@/pages/thumbnail";
+import LabPage from "@/pages/lab";
 
 function Router() {
   const { state } = useWorkflow();
@@ -25,6 +26,7 @@ function Router() {
       </Route>
       <Route path="/script" component={ScriptPage} />
       <Route path="/thumbnail" component={ThumbnailPage} />
+      <Route path="/lab" component={LabPage} />
       <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>

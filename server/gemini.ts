@@ -1086,3 +1086,14 @@ EXTRACTED NARRATION:`;
     throw new Error("Failed to extract narration text from script");
   }
 }
+
+// Runtime access for the Thumbnail Lab module, which builds its own prompts
+// but shares this file's configured client and model selection.
+export function getGeminiRuntime(): {
+  ai: GoogleGenAI;
+  textModel: GeminiTextModel;
+  imageModel: GeminiImageModel;
+  hasKey: boolean;
+} {
+  return { ai, textModel: geminiTextModel, imageModel: geminiImageModel, hasKey: Boolean(geminiApiKey) };
+}
