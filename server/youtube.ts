@@ -180,7 +180,18 @@ export function createSnapshotId(filters: SearchFilters, orderedVideoIds: string
   return `yt_${createHash("sha256").update(identity).digest("hex").slice(0, 32)}`;
 }
 
-export async function searchVideos(filters: SearchFilters): Promise<SearchResponse> {
+export interface SearchOverrides {
+  // Continues a previous search page. Each page is a separate billable call.
+  pageToken?: string;
+  // Exact ISO cutoff, for windows the coarse uploadDate enum cannot express
+  // (for example "within 60 days"). Takes precedence over uploadDate.
+  publishedAfter?: string;
+}
+
+export async function searchVideos(
+  filters: SearchFilters,
+  overrides: SearchOverrides = {},
+): Promise<SearchResponse> {
   const apiKey = process.env.YOUTUBE_API_KEY?.trim();
   if (!apiKey) {
     throw new ProviderError({
@@ -201,9 +212,13 @@ export async function searchVideos(filters: SearchFilters): Promise<SearchRespon
     order: getOrderBy(filters.sortBy),
   });
 
-  const publishedAfter = getPublishedAfter(filters.uploadDate);
+  const publishedAfter = overrides.publishedAfter || getPublishedAfter(filters.uploadDate);
   if (publishedAfter) {
     params.set("publishedAfter", publishedAfter);
+  }
+
+  if (overrides.pageToken) {
+    params.set("pageToken", overrides.pageToken);
   }
 
   const videoDuration = getVideoDuration(filters.duration);

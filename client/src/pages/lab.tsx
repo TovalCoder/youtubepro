@@ -291,13 +291,15 @@ export default function LabPage() {
 
   const [filterDraft, setFilterDraft] = useState({
     minOutlierScore: "",
-    minViews: "",
+    minViews: "1000",
     minViewsPerHour: "",
     maxSubscribers: "",
     minDurationMinutes: "",
     maxDurationMinutes: "",
     publishedWithinDays: "",
   });
+
+  const [searchDepth, setSearchDepth] = useState(2);
 
   const [tray, setTray] = useState<TrayReference[]>([]);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -437,9 +439,13 @@ export default function LabPage() {
     }
     updateLane(lane, { loading: true, error: null });
     try {
-      const data = await postJson<{ search: { videos: Video[] }; scores: LabVideoScore[] }>("/api/lab/search", {
+      const data = await postJson<{ search: { videos: Video[] }; scores: LabVideoScore[]; pagesFetched: number }>("/api/lab/search", {
         lane,
         filters: { query, maxResults: 50 },
+        pages: searchDepth,
+        // Recency goes into the YouTube query itself, so the fetched pages are
+        // already inside the window instead of being filtered down to nothing.
+        publishedWithinDays: filters.publishedWithinDays,
       });
       const scoreById = new Map(data.scores.map((score) => [score.videoId, score]));
       const entries: LabRankedVideo[] = data.search.videos
@@ -705,6 +711,7 @@ export default function LabPage() {
           <CardTitle className="text-base">Smart filters</CardTitle>
           <CardDescription>
             Applied to every lane below, vidIQ-style. Drop max subscribers and raise the outlier floor to surface small channels doing exceptional numbers.
+            A day window also narrows the YouTube query itself, so lanes fetch inside the window instead of filtering afterwards. Min views defaults to 1000 because a channel with a handful of subscribers produces meaningless multipliers; clear it to see everything.
           </CardDescription>
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
@@ -729,6 +736,25 @@ export default function LabPage() {
               />
             </div>
           ))}
+          <div className="col-span-2 space-y-1 md:col-span-4 lg:col-span-7">
+            <Label htmlFor="lab-depth" className="text-xs">
+              Search depth: {searchDepth} page{searchDepth === 1 ? "" : "s"} ({searchDepth * 50} videos per lane, {searchDepth * 100} quota units)
+            </Label>
+            <input
+              id="lab-depth"
+              type="range"
+              min={1}
+              max={6}
+              step={1}
+              value={searchDepth}
+              onChange={(event) => setSearchDepth(Number(event.target.value))}
+              className="w-full accent-primary"
+              data-testid="input-lab-depth"
+            />
+            <p className="text-xs text-muted-foreground">
+              Tight filters need more depth. Six pages is 300 candidates per lane and still only 600 of your 10,000 daily units.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -792,6 +818,7 @@ export default function LabPage() {
               {state.entries.length > 0 && (
                 <p className="text-xs text-muted-foreground">
                   Showing {visible.length} of {state.entries.length} fetched videos after filters. Star a thumbnail to add it to the reference tray.
+                  {visible.length === 0 && " Nothing survived the filters: widen a filter, or raise search depth to fetch more candidates."}
                 </p>
               )}
 

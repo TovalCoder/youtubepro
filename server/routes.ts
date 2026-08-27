@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { searchVideos } from "./youtube";
+import type { Video } from "@shared/schema";
 import { generateScript, generateIdeas, generateResearchInsights, regenerateTitles, regenerateSection, regenerateParagraph, generateThumbnail, generateThumbnailSuggestions, extractNarrationText } from "./gemini";
 import { ideaGenerationRequestSchema, researchInsightsRequestSchema, searchFiltersSchema, scriptInputSchema } from "@shared/schema";
 import { z } from "zod";
@@ -335,9 +336,42 @@ export async function registerRoutes(
           details: parsed.error.flatten(),
         });
       }
-      const search = await searchVideos(parsed.data.filters);
-      const scores = await scoreVideosForLab(search.videos);
-      res.json({ lane: parsed.data.lane, search, scores });
+      // Recency is applied inside the YouTube query rather than only to the
+      // results. Relevance ranking returns established videos by default, so
+      // filtering afterwards discards nearly everything and leaves the recent
+      // small-channel outliers unfetched.
+      const publishedAfter = parsed.data.publishedWithinDays
+        ? new Date(Date.now() - parsed.data.publishedWithinDays * 86_400_000).toISOString()
+        : undefined;
+
+      const collected: Video[] = [];
+      const seenVideoIds = new Set<string>();
+      let pageToken: string | undefined;
+      let pagesFetched = 0;
+      let first: Awaited<ReturnType<typeof searchVideos>> | null = null;
+
+      for (let page = 0; page < parsed.data.pages; page++) {
+        const result = await searchVideos(parsed.data.filters, { pageToken, publishedAfter });
+        pagesFetched++;
+        if (!first) first = result;
+        for (const video of result.videos) {
+          if (seenVideoIds.has(video.id)) continue;
+          seenVideoIds.add(video.id);
+          collected.push(video);
+        }
+        if (!result.nextPageToken) break;
+        pageToken = result.nextPageToken;
+      }
+
+      const search = { ...(first as Awaited<ReturnType<typeof searchVideos>>), videos: collected };
+      const scores = await scoreVideosForLab(collected);
+      res.json({
+        lane: parsed.data.lane,
+        search,
+        scores,
+        pagesFetched,
+        quotaUnitsUsed: pagesFetched * 100,
+      });
     } catch (error: unknown) {
       console.error("Lab search error:", error);
       const providerError = normalizeProviderError(error, "youtube");

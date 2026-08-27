@@ -10,6 +10,12 @@ import { thumbnailReferenceImageSchema } from "./thumbnail-contract";
 export const labSearchRequestSchema = z.object({
   lane: labLaneSchema,
   filters: searchFiltersSchema,
+  // Pages of 50 to fetch. Each page is one billable YouTube search call, so
+  // the caller chooses the depth rather than the server assuming it.
+  pages: z.number().int().min(1).max(6).default(2),
+  // Mirrors the client's recency filter so the window is applied inside the
+  // YouTube query instead of only to what relevance ranking happened to return.
+  publishedWithinDays: z.number().min(1).max(3_650).nullable().default(null),
 }).strict();
 
 export const labSeedsRequestSchema = z.object({
